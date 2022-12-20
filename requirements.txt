@@ -1,0 +1,5 @@
+cffi
+torch
+scipy
+zhconv
+
