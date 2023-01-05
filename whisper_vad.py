@@ -303,7 +303,7 @@ def fix_whisper_timestamps(
 
 class WhisperCppVAD:
 
-    def __init__(self, model: str, language='en', n_threads=4) -> None:
+    def __init__(self, model: str, language='en', n_threads=4, translate=False) -> None:
         self.silero_model = init_jit_model(os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'silero', 'silero_vad.jit')))
         self.ctx = _whisper_cpp.lib.whisper_init(
@@ -316,7 +316,7 @@ class WhisperCppVAD:
         self.params.print_progress = False
         self.params.print_timestamps = True
         self.params.print_special = False
-        self.params.translate = False
+        self.params.translate = bool(translate)
         self.params.language = self.cstr_language
         self.params.n_threads = n_threads
         self.params.offset_ms = 0
@@ -419,11 +419,12 @@ if __name__ == '__main__':
     parser.add_argument("-m", "--model", help="GGML model file")
     parser.add_argument("-l", "--language", default='en', help="Language")
     parser.add_argument("-t", "--threads", type=int, default=1, help="Threads number")
+    parser.add_argument("-T", "--translate", action='store_true', help="Translate")
     parser.add_argument("-o", "--output", help=".srt output file")
     parser.add_argument("file", help="Input audio file. If --ffmpeg is not used, the input must be 16k wav file")
     args = parser.parse_args()
 
-    whisper = WhisperCppVAD(args.model, args.language, args.threads)
+    whisper = WhisperCppVAD(args.model, args.language, args.threads, args.translate)
 
     if args.ffmpeg:
         audio_data = load_with_ffmpeg(args.file)
