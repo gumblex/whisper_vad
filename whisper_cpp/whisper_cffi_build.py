@@ -31,9 +31,20 @@ ffibuilder.cdef("""
         float vlen;        // voice length of the token
     } whisper_token_data;
 
-    // Allocates all memory needed for the model and loads the model from the given file.
-    // Returns NULL on failure.
-    struct whisper_context * whisper_init(const char * path_model);
+    typedef struct whisper_model_loader {
+        void * context;
+
+        size_t (*read)(void * ctx, void * output, size_t read_size);
+        bool    (*eof)(void * ctx);
+        void  (*close)(void * ctx);
+    } whisper_model_loader;
+
+    // Various functions for loading a ggml whisper model.
+    // Allocate (almost) all memory needed for the model.
+    // Return NULL on failure
+    struct whisper_context * whisper_init_from_file(const char * path_model);
+    struct whisper_context * whisper_init_from_buffer(void * buffer, size_t buffer_size);
+    struct whisper_context * whisper_init(struct whisper_model_loader * loader);
 
     // Frees all memory allocated by the model.
     void whisper_free(struct whisper_context * ctx);
@@ -86,12 +97,45 @@ ffibuilder.cdef("""
     whisper_token_data whisper_sample_best(struct whisper_context * ctx);
     whisper_token_data whisper_sample_timestamp(struct whisper_context * ctx, bool is_initial);
 
+    // Convert the provided text into tokens.
+    // The tokens pointer must be large enough to hold the resulting tokens.
+    // Returns the number of tokens on success, no more than n_max_tokens
+    // Returns -1 on failure
+    // TODO: not sure if correct
+    int whisper_tokenize(
+            struct whisper_context * ctx,
+                        const char * text,
+                     whisper_token * tokens,
+                               int   n_max_tokens);
+
+    // Largest language id (i.e. number of available languages - 1)
+    int whisper_lang_max_id();
+
     // Return the id of the specified language, returns -1 if not found
+    // Examples:
+    //   "de" -> 2
+    //   "german" -> 2
     int whisper_lang_id(const char * lang);
+
+    // Return the short string of the specified language id (e.g. 2 -> "de"), returns nullptr if not found
+    const char * whisper_lang_str(int id);
+
+    // Use mel data at offset_ms to try and auto-detect the spoken language
+    // Make sure to call whisper_pcm_to_mel() or whisper_set_mel() first
+    // Returns the top language id or negative on failure
+    // If not null, fills the lang_probs array with the probabilities of all languages
+    // The array must be whispe_lang_max_id() + 1 in size
+    // ref: https://github.com/openai/whisper/blob/main/whisper/decoding.py#L18-L69
+    int whisper_lang_auto_detect(
+            struct whisper_context * ctx,
+                               int   offset_ms,
+                               int   n_threads,
+                             float * lang_probs);
 
     int whisper_n_len          (struct whisper_context * ctx); // mel length
     int whisper_n_vocab        (struct whisper_context * ctx);
     int whisper_n_text_ctx     (struct whisper_context * ctx);
+    int whisper_n_audio_ctx    (struct whisper_context * ctx);
     int whisper_is_multilingual(struct whisper_context * ctx);
 
     // The probabilities for the next token
@@ -107,6 +151,7 @@ ffibuilder.cdef("""
     whisper_token whisper_token_solm(struct whisper_context * ctx);
     whisper_token whisper_token_not (struct whisper_context * ctx);
     whisper_token whisper_token_beg (struct whisper_context * ctx);
+    whisper_token whisper_token_lang(struct whisper_context * ctx, int lang_id);
 
     // Task tokens
     whisper_token whisper_token_translate (void);
@@ -172,6 +217,7 @@ ffibuilder.cdef("""
         const whisper_token * prompt_tokens;
         int prompt_n_tokens;
 
+        // for auto-detection, set to nullptr, "" or "auto"
         const char * language;
 
         struct {

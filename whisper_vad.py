@@ -306,7 +306,7 @@ class WhisperCppVAD:
     def __init__(self, model: str, language='en', n_threads=4, translate=False) -> None:
         self.silero_model = init_jit_model(os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'silero', 'silero_vad.jit')))
-        self.ctx = _whisper_cpp.lib.whisper_init(
+        self.ctx = _whisper_cpp.lib.whisper_init_from_file(
             _whisper_cpp.ffi.new("char[]", model.encode('utf-8')))
         self.language = language
         self.cstr_language = _whisper_cpp.ffi.new("char[]", language.encode('utf-8'))
