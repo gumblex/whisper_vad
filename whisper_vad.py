@@ -303,6 +303,12 @@ def fix_whisper_timestamps(
 
 class WhisperCppVAD:
 
+    best_of = 5
+    beam_size = -1
+    word_thold = 0.01
+    entropy_thold = 2.4
+    logprob_thold = -1.0
+
     def __init__(self, model: str, language='en', n_threads=4, translate=False) -> None:
         self.silero_model = init_jit_model(os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'silero', 'silero_vad.jit')))
@@ -312,6 +318,15 @@ class WhisperCppVAD:
         self.cstr_language = _whisper_cpp.ffi.new("char[]", language.encode('utf-8'))
         self.params = _whisper_cpp.lib.whisper_full_default_params(
             _whisper_cpp.lib.WHISPER_SAMPLING_GREEDY)
+        self.params.greedy.best_of = self.best_of
+        self.params.beam_search.beam_size = self.beam_size
+        if self.beam_size > 1:
+            self.params.strategy = _whisper_cpp.lib.WHISPER_SAMPLING_BEAM_SEARCH
+        else:
+            self.params.strategy = _whisper_cpp.lib.WHISPER_SAMPLING_GREEDY
+        self.params.thold_pt = self.word_thold
+        self.params.entropy_thold = self.entropy_thold
+        self.params.logprob_thold = self.logprob_thold
         self.params.print_realtime = False
         self.params.print_progress = False
         self.params.print_timestamps = True
@@ -420,11 +435,17 @@ if __name__ == '__main__':
     parser.add_argument("-l", "--language", default='en', help="Language")
     parser.add_argument("-t", "--threads", type=int, default=1, help="Threads number")
     parser.add_argument("-T", "--translate", action='store_true', help="Translate")
+    parser.add_argument("-b", "--best-of", type=int, help="number of best candidates to keep")
+    parser.add_argument("-s", "--beam-size", type=int, help="beam size for beam search")
     parser.add_argument("-o", "--output", help=".srt output file")
     parser.add_argument("file", help="Input audio file. If --ffmpeg is not used, the input must be 16k wav file")
     args = parser.parse_args()
 
     whisper = WhisperCppVAD(args.model, args.language, args.threads, args.translate)
+    if args.best_of is not None:
+        whisper.best_of = args.best_of
+    if args.beam_size is not None:
+        whisper.beam_size = args.beam_size
 
     if args.ffmpeg:
         audio_data = load_with_ffmpeg(args.file)
