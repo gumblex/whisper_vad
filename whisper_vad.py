@@ -237,16 +237,28 @@ def segments_to_srt(segments, fp):
         fp.flush()
 
 
-def merge_vad_segments(segments, min_interval_ms=1000):
-    fixed_speeches = []
+def merge_vad_segments(
+    segments, min_interval_ms=250,
+    min_input_segment_ms=250, min_output_segment_ms=1000, 
+):
     last_end = None
     for segment in segments:
+        length = segment['end'] - segment['start']
+        if min_input_segment_ms <= length < min_output_segment_ms:
+            diff = (min_output_segment_ms - length) / 2
+            mid = (segment['start'] + segment['end']) / 2
+            segment['start'] = max(0, int(mid - min_output_segment_ms/2))
+            segment['end'] = int(mid + min_output_segment_ms/2)
+    fixed_speeches = []
+    for segment in segments:
+        if last_end and segment['end'] < last_end:
+            continue
         if last_end and segment['start'] - last_end < min_interval_ms:
             fixed_speeches[-1] = (fixed_speeches[-1][0], segment['end'])
         else:
             fixed_speeches.append((segment['start'], segment['end']))
         last_end = segment['end']
-    return fixed_speeches
+    return list(filter(lambda x: x[1] - x[0] >= min_output_segment_ms, fixed_speeches))
 
 
 def text_postprocess(text, language):
@@ -348,12 +360,12 @@ class WhisperCppVAD:
             speech_pad_ms=30,
             return_ms=True
         )
-        segments = merge_vad_segments(speeches)
+        segments = merge_vad_segments(speeches, 100, 250, 1000)
 
         for seg_start, seg_end in segments:
             # print(seg_start, seg_end)
-            if seg_end - seg_start < 1000:
-                continue
+            #if seg_end - seg_start < 500:
+                #continue
             try:
                 results = self.transcribe_segment(audio_data, seg_start, seg_end)
             except WhisperStuck:
