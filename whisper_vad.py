@@ -18,7 +18,7 @@ import _whisper_cpp
 SAMPLE_RATE = 16000
 
 re_punct = re.compile(r'([\'\"#\(\)*+/:;<=>@\[\\\]^_`\{\|\}~，。、；「」『』 ]+)')
-re_filter_zh = re.compile(r'^（(音量|字幕|互动中|人声|音乐|喝)')
+re_filter_zh = re.compile(r'^（(音量|CC字幕|字幕|互动中|人声|音乐|喝)')
 
 
 def load_audio(filename):
@@ -343,6 +343,7 @@ class WhisperCppVAD:
         self.params.print_progress = False
         self.params.print_timestamps = True
         self.params.print_special = False
+        self.params.suppress_non_speech_tokens = True
         self.params.translate = bool(translate)
         self.params.language = self.cstr_language
         self.params.n_threads = n_threads
@@ -434,7 +435,8 @@ def load_with_ffmpeg(filename, threads=1):
     with tempfile.TemporaryDirectory(prefix='whisper-vad-') as tmpdir:
         temp_wav = os.path.join(tmpdir, '1.wav')
         subprocess.run((
-            'ffmpeg', '-threads', str(threads), '-i', filename, '-af',
+            'ffmpeg', '-hide_banner',
+            '-threads', str(threads), '-i', filename, '-af',
             'loudnorm,aresample=resampler=soxr',
             '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', temp_wav))
         return load_audio(temp_wav)
