@@ -321,11 +321,18 @@ class WhisperCppVAD:
     entropy_thold = 2.4
     logprob_thold = -1.0
 
+    silero_thold = 0.35
+
     def __init__(self, model: str, language='en', n_threads=4, translate=False) -> None:
         self.silero_model = init_jit_model(os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'silero', 'silero_vad.jit')))
-        self.ctx = _whisper_cpp.lib.whisper_init_from_file(
-            _whisper_cpp.ffi.new("char[]", model.encode('utf-8')))
+        struct_params = _whisper_cpp.ffi.new('struct whisper_context_params *')
+        struct_params.use_gpu = False
+        struct_params.gpu_device = 0
+        self.ctx = _whisper_cpp.lib.whisper_init_from_file_with_params(
+            _whisper_cpp.ffi.new("char[]", model.encode('utf-8')),
+            struct_params[0]
+        )
         self.language = language
         self.cstr_language = _whisper_cpp.ffi.new("char[]", language.encode('utf-8'))
         self.params = _whisper_cpp.lib.whisper_full_default_params(
@@ -355,7 +362,7 @@ class WhisperCppVAD:
     def transcribe_file(self, audio_data):
         speeches = silero_get_speech_timestamps(
             audio_data, self.silero_model,
-            threshold=0.5, sampling_rate=SAMPLE_RATE,
+            threshold=self.silero_thold, sampling_rate=SAMPLE_RATE,
             min_speech_duration_ms=50,
             window_size_samples=1536,
             speech_pad_ms=30,
@@ -437,7 +444,8 @@ def load_with_ffmpeg(filename, threads=1):
         subprocess.run((
             'ffmpeg', '-hide_banner',
             '-threads', str(threads), '-i', filename, '-af',
-            'loudnorm,aresample=resampler=soxr',
+            # 'loudnorm,aresample=resampler=soxr',
+            'aresample=resampler=soxr',
             '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', temp_wav))
         return load_audio(temp_wav)
 
