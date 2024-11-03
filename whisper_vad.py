@@ -3,6 +3,7 @@
 
 import os
 import re
+import logging
 import warnings
 import argparse
 import tempfile
@@ -15,10 +16,16 @@ import torch.jit
 import scipy.io.wavfile
 import _whisper_cpp
 
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname).1s: %(message)s')
+
+
 SAMPLE_RATE = 16000
 
 re_punct = re.compile(r'([\'\"#\(\)*+/:;<=>@\[\\\]^_`\{\|\}~，。、；「」『』 ]+)')
-re_filter_zh = re.compile(r'^（(音量|CC字幕|字幕|互动中|人声|音乐|喝)')
+re_filter_zh = re.compile(r'^（(音量|CC字幕|字幕|互动中|人声|音乐|喝)|明镜与点点')
 
 
 def load_audio(filename):
@@ -315,34 +322,38 @@ def fix_whisper_timestamps(
 
 class WhisperCppVAD:
 
-    best_of = 5
-    beam_size = -1
-    word_thold = 0.01
-    entropy_thold = 2.4
-    logprob_thold = -1.0
+    def __init__(self, model: str, language='en', n_threads=4, translate=False, gpu='0') -> None:
+        # whisper.cpp parameters
+        self.best_of = 5
+        self.beam_size = -1
+        self.word_thold = 0.01
+        self.entropy_thold = 2.4
+        self.logprob_thold = -1.0
+        # silero threshold
+        self.silero_thold = 0.35
 
-    silero_thold = 0.35
-
-    def __init__(self, model: str, language='en', n_threads=4, translate=False) -> None:
         self.silero_model = init_jit_model(os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'silero', 'silero_vad.jit')))
         struct_params = _whisper_cpp.ffi.new('struct whisper_context_params *')
-        struct_params.use_gpu = False
-        struct_params.gpu_device = 0
+        if gpu == 'off':
+            struct_params.use_gpu = False
+            struct_params.gpu_device = 0
+        else:
+            struct_params.use_gpu = True
+            struct_params.gpu_device = int(gpu)
         self.ctx = _whisper_cpp.lib.whisper_init_from_file_with_params(
             _whisper_cpp.ffi.new("char[]", model.encode('utf-8')),
             struct_params[0]
         )
         self.language = language
         self.cstr_language = _whisper_cpp.ffi.new("char[]", language.encode('utf-8'))
-        self.params = _whisper_cpp.lib.whisper_full_default_params(
-            _whisper_cpp.lib.WHISPER_SAMPLING_GREEDY)
+        if self.beam_size > 1:
+            strategy = _whisper_cpp.lib.WHISPER_SAMPLING_BEAM_SEARCH
+        else:
+            strategy = _whisper_cpp.lib.WHISPER_SAMPLING_GREEDY
+        self.params = _whisper_cpp.lib.whisper_full_default_params(strategy)
         self.params.greedy.best_of = self.best_of
         self.params.beam_search.beam_size = self.beam_size
-        if self.beam_size > 1:
-            self.params.strategy = _whisper_cpp.lib.WHISPER_SAMPLING_BEAM_SEARCH
-        else:
-            self.params.strategy = _whisper_cpp.lib.WHISPER_SAMPLING_GREEDY
         self.params.thold_pt = self.word_thold
         self.params.entropy_thold = self.entropy_thold
         self.params.logprob_thold = self.logprob_thold
@@ -368,7 +379,7 @@ class WhisperCppVAD:
             speech_pad_ms=30,
             return_ms=True
         )
-        segments = merge_vad_segments(speeches, 100, 250, 1000)
+        segments = merge_vad_segments(speeches, 100, 250, 1200)
 
         for seg_start, seg_end in segments:
             # print(seg_start, seg_end)
@@ -377,7 +388,7 @@ class WhisperCppVAD:
             try:
                 results = self.transcribe_segment(audio_data, seg_start, seg_end)
             except WhisperStuck:
-                print('[%s] Whisper repeated output! retry transcribe.' %
+                logging.warning('[%s] Whisper repeated output! retry transcribe.' %
                     format_srt_timestamp(seg_start))
                 results = self.transcribe_segment(
                     audio_data, seg_start, seg_end, True)
@@ -388,7 +399,7 @@ class WhisperCppVAD:
                 txt = text_postprocess(txt, self.language)
                 if not txt:
                     continue
-                print('[%s --> %s] %s' % (
+                logging.info('[%s --> %s] %s' % (
                     format_srt_timestamp(t1), format_srt_timestamp(t2), txt))
                 yield (t1, t2, txt)
 
@@ -396,13 +407,13 @@ class WhisperCppVAD:
             t1, t2, txt = self.last_segment
             txt = text_postprocess(txt, self.language)
             if txt:
-                print('[%s --> %s] %s' % (
+                logging.info('[%s --> %s] %s' % (
                     format_srt_timestamp(t1), format_srt_timestamp(t2), txt))
                 yield (t1, t2, txt)
 
     def transcribe_segment(self, audio_data, start_ms, end_ms, is_retry=False):
         start_sample = int(start_ms * SAMPLE_RATE // 1000)
-        end_sample = int(end_ms * SAMPLE_RATE // 1000)
+        end_sample = -int(end_ms * SAMPLE_RATE // -1000) + 1
         audio_view = audio_data[start_sample:end_sample]
         audio_buf = _whisper_cpp.ffi.from_buffer('float[]', audio_view)
         # self.params.offset_ms = offset_ms
@@ -426,10 +437,10 @@ class WhisperCppVAD:
             t1 = _whisper_cpp.lib.whisper_full_get_segment_t1(self.ctx, i)
             txt_str = bytes(_whisper_cpp.ffi.string(txt)).decode('utf-8', errors='ignore')
             segments.append((t0*10, t1*10, txt_str))
-        # print(segments)
+        # logging.debug(segments)
         results = fix_whisper_timestamps(
             self.last_segment, segments, start_ms, start_ms, end_ms, is_retry)
-        # print(results)
+        # logging.debug(results)
         if results:
             self.last_segment = results.pop()
         return results
@@ -454,16 +465,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Whisper STT with Voice Activity Detection.")
     parser.add_argument("-f", "--ffmpeg", help="Use ffmpeg to convert source file", action='store_true')
     parser.add_argument("-m", "--model", help="GGML model file")
-    parser.add_argument("-l", "--language", default='en', help="Language")
+    parser.add_argument("-l", "--language", default='auto', help='Language code. Can auto detect, specify "auto". Default: auto')
     parser.add_argument("-t", "--threads", type=int, default=1, help="Threads number")
     parser.add_argument("-T", "--translate", action='store_true', help="Translate")
     parser.add_argument("-b", "--best-of", type=int, help="number of best candidates to keep")
     parser.add_argument("-s", "--beam-size", type=int, help="beam size for beam search")
+    parser.add_argument("-g", "--gpu", default='0', help='which GPU to use, specifies "off" to disable. Default: 0')
     parser.add_argument("-o", "--output", help=".srt output file")
     parser.add_argument("file", help="Input audio file. If --ffmpeg is not used, the input must be 16k wav file")
     args = parser.parse_args()
 
-    whisper = WhisperCppVAD(args.model, args.language, args.threads, args.translate)
+    whisper = WhisperCppVAD(args.model, args.language, args.threads, args.translate, args.gpu)
     if args.best_of is not None:
         whisper.best_of = args.best_of
     if args.beam_size is not None:

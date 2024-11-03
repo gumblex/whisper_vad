@@ -17,27 +17,22 @@ Run `whisper_vad.py` directly for transcribing any video/audio files into SRT su
 
 ## Build and usage
 
+### Simple
+
 1. `pip install -r requirements.txt`
 2. `make`
-3. `python3 whisper_vad.py --help` to see usage.
 
+### Custom Device
 
-## GPU
-This currently only supports CLBlast and AMD HIPBLAS.
+1. `git submodule update --init --recursive`
+2. `cd whisper.cpp`
+3. [Compile whisper.cpp to match your device](https://github.com/ggerganov/whisper.cpp)
+   1. `cmake -B build` (add any build options)
+   2. `cmake --build build --config Release -j8`
+4. `pip install -r requirements.txt`
+5. `make`
 
-### CLBlast
+### Usage
 
-Dependencies: `libclblast`, `OpenCL`
-
-Build: `WHISPER_CLBLAST=1 make`
-
-### HIPBLAS
-
-Dependencies: `libhipblas`, `libamdhip64`, `librocblas`
-
-Build:
-1. Build original [Whisper.cpp](https://github.com/ggerganov/whisper.cpp)
-2. Copy `ggml-cuda.o` to `whisper_cpp`
-3. `WHISPER_HIPBLAS=1 make`
-
+`python3 whisper_vad.py --help` to see usage.
 
